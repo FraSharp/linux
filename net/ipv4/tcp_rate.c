@@ -109,21 +109,18 @@ void tcp_rate_skb_delivered(struct sock *sk, struct sk_buff *skb,
 
 	tx_tstamp = tcp_skb_timestamp_us(skb);
 	if (!rs->prior_delivered ||
-	    tcp_skb_sent_after(tx_tstamp, tp->first_tx_mstamp,
-			       scb->end_seq, rs->last_end_seq)) {
+	    after(scb->tx.delivered, rs->prior_delivered)) {
 		rs->prior_delivered_ce  = scb->tx.delivered_ce;
 		rs->prior_delivered  = scb->tx.delivered;
 		rs->prior_mstamp     = scb->tx.delivered_mstamp;
 		rs->is_app_limited   = scb->tx.is_app_limited;
 		rs->is_retrans	     = scb->sacked & TCPCB_RETRANS;
-		rs->last_end_seq     = scb->end_seq;
 
 		/* Record send time of most recently ACKed packet: */
 		tp->first_tx_mstamp  = tx_tstamp;
 		/* Find the duration of the "send phase" of this window: */
-		rs->interval_us      = tcp_stamp32_us_delta(
-						tp->first_tx_mstamp,
-						scb->tx.first_tx_mstamp);
+		rs->interval_us = tcp_stamp_us_delta(tp->first_tx_mstamp,
+						     scb->tx.first_tx_mstamp);
 
 	}
 	/* Mark off the skb delivered once it's sacked to avoid being
