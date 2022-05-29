@@ -1,10 +1,20 @@
-export ARCH=x86
+#!/usr/bin/env sh
 
-make arch_defconfig LLVM=1 LLVM_IAS=1 -j69
-make LLVM=1 LLVM_IAS=1 -j69
-make modules LLVM=1 LLVM_IAS=1 -j69
-sudo make modules_install LLVM=1 LLVM_IAS=1 -j69
-make bzImage LLVM=1 LLVM_IAS=1 -j69
-sudo cp -v arch/x86/boot/bzImage /boot/vmlinuz-linux517
-sudo mkinitcpio -p linux517
-sudo grub-mkconfig -o /boot/grub/grub.cfg
+set -e
+
+export ARCH=x86 LLVM=1 LLVM_IAS=1
+export PATH="$HOME/tc/clang-14/bin:${PATH}"
+
+main() {
+    make arch_defconfig -j69
+    make -j69
+    make modules -j69
+    sudo make modules_install -j69
+    make bzImage -j69
+
+    sudo cp -v arch/x86/boot/bzImage /boot/vmlinuz-linux519
+    sudo mkinitcpio -p linux519
+    sudo grub-mkconfig -o /boot/grub/grub.cfg
+}
+
+main "$@"
