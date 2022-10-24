@@ -39,6 +39,7 @@
 #include "ipoib/ipoib.h"
 #include "en_accel/en_accel.h"
 #include "en_accel/ipsec_rxtx.h"
+#include "en_accel/macsec.h"
 #include "en/ptp.h"
 #include <net/ipv6.h>
 
@@ -152,14 +153,14 @@ mlx5e_tx_get_gso_ihs(struct mlx5e_txqsq *sq, struct sk_buff *skb, int *hopbyhop)
 
 	*hopbyhop = 0;
 	if (skb->encapsulation) {
-		ihs = skb_inner_transport_offset(skb) + inner_tcp_hdrlen(skb);
+		ihs = skb_inner_tcp_all_headers(skb);
 		stats->tso_inner_packets++;
 		stats->tso_inner_bytes += skb->len - ihs;
 	} else {
 		if (skb_shinfo(skb)->gso_type & SKB_GSO_UDP_L4) {
 			ihs = skb_transport_offset(skb) + sizeof(struct udphdr);
 		} else {
-			ihs = skb_transport_offset(skb) + tcp_hdrlen(skb);
+			ihs = skb_tcp_all_headers(skb);
 			if (ipv6_has_hopopt_jumbo(skb)) {
 				*hopbyhop = sizeof(struct hop_jumbo_hdr);
 				ihs -= sizeof(struct hop_jumbo_hdr);
@@ -485,7 +486,7 @@ err_drop:
 static bool mlx5e_tx_skb_supports_mpwqe(struct sk_buff *skb, struct mlx5e_tx_attr *attr)
 {
 	return !skb_is_nonlinear(skb) && !skb_vlan_tag_present(skb) && !attr->ihs &&
-	       !attr->insz;
+	       !attr->insz && !mlx5e_macsec_skb_is_offload(skb);
 }
 
 static bool mlx5e_tx_mpwqe_same_eseg(struct mlx5e_txqsq *sq, struct mlx5_wqe_eth_seg *eseg)
@@ -631,12 +632,22 @@ void mlx5e_tx_mpwqe_ensure_complete(struct mlx5e_txqsq *sq)
 		mlx5e_tx_mpwqe_session_complete(sq);
 }
 
+static void mlx5e_cqe_ts_id_eseg(struct mlx5e_ptpsq *ptpsq, struct sk_buff *skb,
+				 struct mlx5_wqe_eth_seg *eseg)
+{
+	if (ptpsq->ts_cqe_ctr_mask && unlikely(skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP))
+		eseg->flow_table_metadata = cpu_to_be32(ptpsq->skb_fifo_pc &
+							ptpsq->ts_cqe_ctr_mask);
+}
+
 static void mlx5e_txwqe_build_eseg(struct mlx5e_priv *priv, struct mlx5e_txqsq *sq,
 				   struct sk_buff *skb, struct mlx5e_accel_tx_state *accel,
 				   struct mlx5_wqe_eth_seg *eseg, u16 ihs)
 {
 	mlx5e_accel_tx_eseg(priv, skb, eseg, ihs);
 	mlx5e_txwqe_build_eseg_csum(sq, skb, accel, eseg);
+	if (unlikely(sq->ptpsq))
+		mlx5e_cqe_ts_id_eseg(sq->ptpsq, skb, eseg);
 }
 
 netdev_tx_t mlx5e_xmit(struct sk_buff *skb, struct net_device *dev)

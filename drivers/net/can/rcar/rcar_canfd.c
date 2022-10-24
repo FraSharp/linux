@@ -27,6 +27,7 @@
 #include <linux/types.h>
 #include <linux/interrupt.h>
 #include <linux/errno.h>
+#include <linux/ethtool.h>
 #include <linux/netdevice.h>
 #include <linux/platform_device.h>
 #include <linux/can/dev.h>
@@ -1052,7 +1053,7 @@ static void rcar_canfd_error(struct net_device *ndev, u32 cerfl,
 		netdev_dbg(ndev, "Error warning interrupt\n");
 		priv->can.state = CAN_STATE_ERROR_WARNING;
 		priv->can.can_stats.error_warning++;
-		cf->can_id |= CAN_ERR_CRTL;
+		cf->can_id |= CAN_ERR_CRTL | CAN_ERR_CNT;
 		cf->data[1] = txerr > rxerr ? CAN_ERR_CRTL_TX_WARNING :
 			CAN_ERR_CRTL_RX_WARNING;
 		cf->data[6] = txerr;
@@ -1062,7 +1063,7 @@ static void rcar_canfd_error(struct net_device *ndev, u32 cerfl,
 		netdev_dbg(ndev, "Error passive interrupt\n");
 		priv->can.state = CAN_STATE_ERROR_PASSIVE;
 		priv->can.can_stats.error_passive++;
-		cf->can_id |= CAN_ERR_CRTL;
+		cf->can_id |= CAN_ERR_CRTL | CAN_ERR_CNT;
 		cf->data[1] = txerr > rxerr ? CAN_ERR_CRTL_TX_PASSIVE :
 			CAN_ERR_CRTL_RX_PASSIVE;
 		cf->data[6] = txerr;
@@ -1695,6 +1696,10 @@ static const struct net_device_ops rcar_canfd_netdev_ops = {
 	.ndo_change_mtu = can_change_mtu,
 };
 
+static const struct ethtool_ops rcar_canfd_ethtool_ops = {
+	.get_ts_info = ethtool_op_get_ts_info,
+};
+
 static int rcar_canfd_channel_probe(struct rcar_canfd_global *gpriv, u32 ch,
 				    u32 fcan_freq)
 {
@@ -1711,6 +1716,7 @@ static int rcar_canfd_channel_probe(struct rcar_canfd_global *gpriv, u32 ch,
 	priv = netdev_priv(ndev);
 
 	ndev->netdev_ops = &rcar_canfd_netdev_ops;
+	ndev->ethtool_ops = &rcar_canfd_ethtool_ops;
 	ndev->flags |= IFF_ECHO;
 	priv->ndev = ndev;
 	priv->base = gpriv->base;
@@ -1874,10 +1880,9 @@ static int rcar_canfd_probe(struct platform_device *pdev)
 
 	/* Global controller context */
 	gpriv = devm_kzalloc(&pdev->dev, sizeof(*gpriv), GFP_KERNEL);
-	if (!gpriv) {
-		err = -ENOMEM;
-		goto fail_dev;
-	}
+	if (!gpriv)
+		return -ENOMEM;
+
 	gpriv->pdev = pdev;
 	gpriv->channels_mask = channels_mask;
 	gpriv->fdmode = fdmode;
@@ -1898,12 +1903,9 @@ static int rcar_canfd_probe(struct platform_device *pdev)
 
 	/* Peripheral clock */
 	gpriv->clkp = devm_clk_get(&pdev->dev, "fck");
-	if (IS_ERR(gpriv->clkp)) {
-		err = PTR_ERR(gpriv->clkp);
-		dev_err(&pdev->dev, "cannot get peripheral clock, error %d\n",
-			err);
-		goto fail_dev;
-	}
+	if (IS_ERR(gpriv->clkp))
+		return dev_err_probe(&pdev->dev, PTR_ERR(gpriv->clkp),
+				     "cannot get peripheral clock\n");
 
 	/* fCAN clock: Pick External clock. If not available fallback to
 	 * CANFD clock
@@ -1911,12 +1913,10 @@ static int rcar_canfd_probe(struct platform_device *pdev)
 	gpriv->can_clk = devm_clk_get(&pdev->dev, "can_clk");
 	if (IS_ERR(gpriv->can_clk) || (clk_get_rate(gpriv->can_clk) == 0)) {
 		gpriv->can_clk = devm_clk_get(&pdev->dev, "canfd");
-		if (IS_ERR(gpriv->can_clk)) {
-			err = PTR_ERR(gpriv->can_clk);
-			dev_err(&pdev->dev,
-				"cannot get canfd clock, error %d\n", err);
-			goto fail_dev;
-		}
+		if (IS_ERR(gpriv->can_clk))
+			return dev_err_probe(&pdev->dev, PTR_ERR(gpriv->can_clk),
+					     "cannot get canfd clock\n");
+
 		gpriv->fcan = RCANFD_CANFDCLK;
 
 	} else {
